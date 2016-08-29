@@ -25,17 +25,17 @@ ui_string = """
 <ui>
         <popup name="BrowserSourceViewPopup">
             <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
+                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" label="Stop after this track" />
             </placeholder>
         </popup>
         <popup name="PlaylistViewPopup">
             <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
+                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" label="Stop after this track" />
             </placeholder>
         </popup>
         <popup name="QueuePlaylistViewPopup">
             <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
+                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" label="Stop after this track" />
             </placeholder>
         </popup>
 
@@ -57,7 +57,6 @@ class Singleton(object):
     _instance = None
     def __new__(class_, *args, **kwargs):
         if not isinstance(class_._instance, class_):
-            print(class_._instance, class_)
             class_._instance = object.__new__(class_, *args, **kwargs)
             class_._instance._init()
         return class_._instance
@@ -65,7 +64,6 @@ class Singleton(object):
 
 class FakeUIManager(Singleton):
     def _init(self):
-        print('initing FM')
         self._action_groups = {}
         self._widgets = {}
         self._uids = {}
@@ -113,15 +111,9 @@ class FakeUIManager(Singleton):
         action_name = menu_element.attrib['action']
         item_name = menu_element.attrib['name']
 
-        if group_name is None:
-            group_name = list(self._action_groups)[0]
-
-        group = self._action_groups[group_name]
-        act = group.get_action(action_name)
-
         item = Gio.MenuItem()
         item.set_detailed_action('win.' + action_name)
-        item.set_label(act.get_label())
+        item.set_label(menu_element.attrib['label'])
         app = Gio.Application.get_default()
 
         if popup_type == 'QueuePlaylistViewPopup':
@@ -152,29 +144,31 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
 
     def do_activate(self):
         print("Activating Plugin")
-        self.stop_status = False
+        self.stop_status = False  # Only used for stop after current song.
         shell = self.object
-        self.action = Gtk.ToggleAction(
+        self.action_stop_after_current = Gtk.ToggleAction(
                 name='StopAfterCurrentTrack',
                 label=('Stop After'),
                 tooltip=('Stop playback after current song'),
                 stock_id=Gtk.STOCK_MEDIA_STOP
                 )
-        self.activate_id = self.action.connect('activate',self.toggle_status,shell)
+        self.activate_id = self.action_stop_after_current.connect('activate', self.toggle_status, shell)
         self.action_group = Gtk.ActionGroup(name='StopAfterPluginActions')
-        self.action_group.add_action(self.action)
+        self.action_group.add_action(self.action_stop_after_current)
 
         sp = shell.props.shell_player
         self.pec_id = sp.connect('playing-song-changed', self.playing_entry_changed)
 
-        action = Gtk.Action(name="StopAfterTrack", label=_("_Stop After Track"),
+        '''action = Gtk.Action(name="StopAfterTrack", label=_("_Stop after this track"),
                             tooltip=_("Stop playing after this track"),
-                            stock_id='gnome-mime-text-x-python')
-        action.connect('activate', self.stop_after_track, self.object)
-        self.action_group.add_action(action)
+                            stock_id='gnome-mime-text-x-python')'''
+        action = Gio.SimpleAction(name="StopAfterTrack")
+        action.connect('activate', self.stop_after_current_track, self.object)
+        #self.action_group.add_action(action)
+        shell.props.window.add_action(action)
 
-        self.action.set_active(False)
-        self.action.set_sensitive(False)
+        self.action_stop_after_current.set_active(False)
+        self.action_stop_after_current.set_sensitive(False)
 
         #uim = shell.props.ui_manager
         uim = FakeUIManager()
@@ -207,7 +201,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         sp = shell.props.shell_player
         sp.disconnect (self.pec_id)
         self.action_group = None
-        self.action = None
+        self.action_stop_after_current = None
 
         del self.ui_id
         del self.previous_song
@@ -224,7 +218,8 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
                 manager.get_widget("/QueuePlaylistViewPopup/PluginPlaceholder/StopAfterTrackPopup")
                 )
 
-    def toggle_status(self,action,shell):
+    def toggle_status(self, action, shell):
+        """Used for stop after current song"""
         if action.get_active():
             self.stop_status = True
         else:
@@ -235,12 +230,12 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         print("Playing entry changed")
         print(entry)
         if entry is not None:
-            self.action.set_sensitive(True)
+            self.action_stop_after_current.set_sensitive(True)
             if self.stop_status:
-                self.action.set_active(False)
+                self.action_stop_after_current.set_active(False)
                 sp.stop()
         else:
-            self.action.set_sensitive(False)
+            self.action_stop_after_current.set_sensitive(False)
 
         # Check what song was last played, stop if we should.
         # If not, check what song is playing and store it.
@@ -269,7 +264,17 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
             return selected[0].get_playback_uri()
         return None
 
-    def stop_after_track(self, action, shell):
+    def stop_after_current_track(self, action, param, shell):
+        """
+        Parameters
+        ----------
+        action :
+            The action that caused this, og Gio.SimpleAction
+        param : 
+            I think we get the param list here, if so we should get none, so ignore it
+        shell : 
+        The shell, why do we pass this in?
+        """
         selected_song = self.get_selected_song()
         if self.stop_song is not None and self.stop_song == selected_song:
             print("a")
