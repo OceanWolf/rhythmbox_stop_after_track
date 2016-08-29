@@ -18,7 +18,8 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA.
 
 
-from gi.repository import Gtk, GObject, RB, Peas
+from gi.repository import Gtk, GObject, RB, Peas, Gio
+import xml.etree.ElementTree as ET
 
 ui_string = """
 <ui>
@@ -51,6 +52,98 @@ ui_string = """
 </ui>
 """
 
+
+class Singleton(object):
+    _instance = None
+    def __new__(class_, *args, **kwargs):
+        if not isinstance(class_._instance, class_):
+            print(class_._instance, class_)
+            class_._instance = object.__new__(class_, *args, **kwargs)
+            class_._instance._init()
+        return class_._instance
+
+
+class FakeUIManager(Singleton):
+    def _init(self):
+        print('initing FM')
+        self._action_groups = {}
+        self._widgets = {}
+        self._uids = {}
+        self._current_uid = None
+
+    def _get_new_uid(self):
+        return len(self._uids)
+
+    def insert_action_group(self, group, pos):
+        self._action_groups[group.get_name()] = group
+
+    def remove_action_group(self, group):
+        del self._action_groups[group.get_name()]
+
+    def add_ui_from_string(self, ui_str):
+        try:
+            self._current_uid = self._get_new_uid()
+            ret = self._current_uid
+            root = ET.fromstring(ui_string)
+            for el in root:
+                if el.tag == 'menuitem':
+                    self.add_menuitem(el)
+                elif el.tag == 'popup':
+                    self.add_popup(el)
+        finally:
+            self.current_id = None
+
+        return ret
+
+    def remove_ui(self, ui_id):
+        app = Gio.Application.get_default()
+        for menu, index in self._uids[ui_id]:
+            app.remove_plugin_menu_item(menu, index)
+
+        del self._uids[ui_id]
+
+    def get_widget(self, ref):
+        # Very simple for now, too simple, but for this programme it works
+        return self._widgets[ref]
+
+    def add_popup(self, el, group_name=None):
+        popup_type = el.attrib['name']
+
+        menu_element = el.find('.//menuitem')
+        action_name = menu_element.attrib['action']
+        item_name = menu_element.attrib['name']
+
+        if group_name is None:
+            group_name = list(self._action_groups)[0]
+
+        group = self._action_groups[group_name]
+        act = group.get_action(action_name)
+
+        item = Gio.MenuItem()
+        item.set_detailed_action('win.' + action_name)
+        item.set_label(act.get_label())
+        app = Gio.Application.get_default()
+
+        if popup_type == 'QueuePlaylistViewPopup':
+            plugin_type = 'queue-popup'
+        elif popup_type == 'BrowserSourceViewPopup':
+            plugin_type = 'browser-popup'
+        elif popup_type == 'PlaylistViewPopup':
+            plugin_type = 'playlist-popup'
+        else:
+            raise KeyError('unknown type %s' % plugin_type)
+
+        index = plugin_type + action_name
+        app.add_plugin_menu_item(plugin_type, index, item)
+        self._widgets['/' + popup_type] = item
+
+        uid = self._current_uid
+        if uid is not None:
+            uid = self._get_new_uid()
+
+        widgets_by_uid = self._uids.setdefault(uid, [])
+        widgets_by_uid.append((plugin_type, index))
+
 class StopAfterPlugin (GObject.Object, Peas.Activatable):
     object = GObject.property(type=GObject.Object)
 
@@ -58,7 +151,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         super(StopAfterPlugin, self).__init__()
 
     def do_activate(self):
-        print "Activating Plugin"
+        print("Activating Plugin")
         self.stop_status = False
         shell = self.object
         self.action = Gtk.ToggleAction(
@@ -83,43 +176,33 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         self.action.set_active(False)
         self.action.set_sensitive(False)
 
-        uim = shell.props.ui_manager
+        #uim = shell.props.ui_manager
+        uim = FakeUIManager()
         uim.insert_action_group(self.action_group,0)
         self.ui_id = uim.add_ui_from_string(ui_string)
 
-
-        #player = shell.props.shell_player
-        #self.create_action(uim)#self.manager)
-
         browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
-        self.br_cb = browser_source_view.connect('show', self.activate_browser_source_view)
-        #self.ui_id = self.manager.add_ui_from_string(ui_string)
-        #self.cb_ids = (player.connect('playing-song-changed', self.playing_changed_cb),)
+        #self.br_cb = browser_source_view.connect('show', self.activate_browser_source_view)
         
-        uim.ensure_update()
+        #uim.ensure_update()
 
         self.previous_song = None
         self.stop_song = None
 
-        print "Plugin Activated"
-
+        print("Plugin Activated")
 
     def do_deactivate(self):
-        print "Deactivating Plugin"
+        print("Deactivating Plugin")
         shell = self.object
-        uim = shell.props.ui_manager
+        #uim = shell.props.ui_manager
+        uim = FakeUIManager()
         
-        #shell = self.object
         player = shell.props.shell_player
         browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
-        browser_source_view.disconnect(self.br_cb)
+        #browser_source_view.disconnect(self.br_cb)
         uim.remove_ui(self.ui_id)
-        #self.manager.remove_action_group(self.action_group)
-        uim.ensure_update()
-        #for cb_id in self.cb_ids:
-        #    player.disconnect(cb_id)
+        #uim.ensure_update()
 
-        #uim.remove_ui(self.ui_id)
         uim.remove_action_group(self.action_group)
         sp = shell.props.shell_player
         sp.disconnect (self.pec_id)
@@ -127,18 +210,15 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         self.action = None
 
         del self.ui_id
-        #del self.cb_ids
-        #del self.manager
         del self.previous_song
         del self.stop_song
         
-        print "Plugin Deactivated"
+        print("Plugin Deactivated")
 
     def get_all_popups(self):
         # Returns a list with all the widgets we use for the context menu.
         shell = self.object
         manager = shell.props.ui_manager
-        #manager = self.manager
         return (manager.get_widget("/BrowserSourceViewPopup/PluginPlaceholder/StopAfterTrackPopup"),
                 manager.get_widget("/PlaylistViewPopup/PluginPlaceholder/StopAfterTrackPopup"),
                 manager.get_widget("/QueuePlaylistViewPopup/PluginPlaceholder/StopAfterTrackPopup")
@@ -149,11 +229,11 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
             self.stop_status = True
         else:
             self.stop_status = False
-        print self.stop_status
+        print(self.stop_status)
 
     def playing_entry_changed(self, sp, entry):
-        print "Playing entry changed"
-        print entry
+        print("Playing entry changed")
+        print(entry)
         if entry is not None:
             self.action.set_sensitive(True)
             if self.stop_status:
@@ -162,7 +242,6 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         else:
             self.action.set_sensitive(False)
 
-
         # Check what song was last played, stop if we should.
         # If not, check what song is playing and store it.
         if (self.previous_song is not None) and (self.previous_song == self.stop_song):
@@ -170,8 +249,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
        
         if sp.get_playing_entry() is not None: 
             self.previous_song = sp.get_playing_entry().get_string(RB.RhythmDBPropType.LOCATION)
-            print "Previous song set to {0}".format(self.previous_song)
-
+            print("Previous song set to {0}".format(self.previous_song))
 
     def activate_browser_source_view(self, data):
         selected_song = self.get_selected_song()
@@ -194,10 +272,8 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
     def stop_after_track(self, action, shell):
         selected_song = self.get_selected_song()
         if self.stop_song is not None and self.stop_song == selected_song:
-            print "a"
+            print("a")
             self.stop_song = None
         else:
-            print "b"
+            print("b")
             self.stop_song = selected_song
-
-        
