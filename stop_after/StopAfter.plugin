@@ -6,4 +6,4 @@ Name=Stop After
 Description=A plugin which adds a button and menus to stop playback when a given track ends.
 Authors=Srijan Choudhary <srijan4@gmail.com>, Radu Stoica (radumstoica@gmail.com), fossfreedom (foss.freedom@gmail.com), OceanWolf
 Copyright=Copyright © 2016 Srijan Choudhary, Radu Stoica, © 2024 OceanWolf
-Website=https://github.com/srijan/StopAfterCurrentTrack-Plugin-for-Rhythmbox
+Website=https://github.com/OceanWolf/rhythmbox_stop_after_track
