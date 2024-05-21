@@ -2,6 +2,7 @@
 # Copyright (C) 2012 - Srijan Choudhary
 # Copyright (C) 2012 - Radu Stoica
 # Copyright (C) 2012 - fossfreedom
+# Copyright (C) 2024 - OceanWolf
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,160 +19,180 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA.
 
 
-from gi.repository import Gtk, GObject, RB, Peas
+from gi.repository import Gtk, GObject, RB, Peas, Gio, GLib
+import xml.etree.ElementTree as ET
 
-ui_string = """
-<ui>
-        <popup name="BrowserSourceViewPopup">
-            <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
-            </placeholder>
-        </popup>
-        <popup name="PlaylistViewPopup">
-            <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
-            </placeholder>
-        </popup>
-        <popup name="QueuePlaylistViewPopup">
-            <placeholder name="PluginPlaceholder">
-                <menuitem name="StopAfterTrackPopup" action="StopAfterTrack" />
-            </placeholder>
-        </popup>
 
-    <menubar name="MenuBar">
-        <menu name="ControlMenu" action="Control">
-            <menuitem name="StopAfterCurrentTrack" action="StopAfterCurrentTrack"/>
-        </menu>
-    </menubar>
-    <toolbar name="ToolBar">
-        <placeholder name="ToolBarPluginPlaceholder">
-            <toolitem name="StopAfterCurrentTrack" action="StopAfterCurrentTrack"/>
-        </placeholder>
-    </toolbar>
-</ui>
-"""
+class NewToggleAction(Gio.SimpleAction):
+    def __init__(self, name):
+        super().__init__(name=name, parameter_type=None, state=GLib.Variant.new_boolean(False))
+
+    def set_active(self, state):
+        """
+        Sets the state of the action
+
+        Parameters
+        ----------
+        state : boolean
+            The new state of the action
+        """
+        self.change_state(GLib.Variant.new_boolean(state))
+
 
 class StopAfterPlugin (GObject.Object, Peas.Activatable):
     object = GObject.property(type=GObject.Object)
 
     def __init__(self):
         super(StopAfterPlugin, self).__init__()
+        self._widgets = []
+        self._menu_items = []
 
     def do_activate(self):
-        print "Activating Plugin"
-        self.stop_status = False
+        print("Activating Plugin")
+        self.stop_status = False  # Only used for stop after current song.
         shell = self.object
-        self.action = Gtk.ToggleAction(
-                name='StopAfterCurrentTrack',
-                label=('Stop After'),
-                tooltip=('Stop playback after current song'),
-                stock_id=Gtk.STOCK_MEDIA_STOP
-                )
-        self.activate_id = self.action.connect('activate',self.toggle_status,shell)
-        self.action_group = Gtk.ActionGroup(name='StopAfterPluginActions')
-        self.action_group.add_action(self.action)
+
+        self.action_stop_after_current = NewToggleAction('StopAfterCurrentTrack')
+        self.activate_id = self.action_stop_after_current.connect('change-state', self.toggle_status)
 
         sp = shell.props.shell_player
         self.pec_id = sp.connect('playing-song-changed', self.playing_entry_changed)
 
-        action = Gtk.Action(name="StopAfterTrack", label=_("_Stop After Track"),
-                            tooltip=_("Stop playing after this track"),
-                            stock_id='gnome-mime-text-x-python')
-        action.connect('activate', self.stop_after_track, self.object)
-        self.action_group.add_action(action)
+        action = Gio.SimpleAction(name="StopAfterTrack")
+        action.connect('activate', self.stop_after_current_track, self.object)
+        shell.props.window.add_action(action)
 
-        self.action.set_active(False)
-        self.action.set_sensitive(False)
+        # Add the tools
+        self.add_toolbar_togglebutton()
+        self.add_popups()
 
-        uim = shell.props.ui_manager
-        uim.insert_action_group(self.action_group,0)
-        self.ui_id = uim.add_ui_from_string(ui_string)
-
-
-        #player = shell.props.shell_player
-        #self.create_action(uim)#self.manager)
-
-        browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
-        self.br_cb = browser_source_view.connect('show', self.activate_browser_source_view)
-        #self.ui_id = self.manager.add_ui_from_string(ui_string)
-        #self.cb_ids = (player.connect('playing-song-changed', self.playing_changed_cb),)
-        
-        uim.ensure_update()
+        #browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
+        #self.br_cb = browser_source_view.connect('show', self.activate_browser_source_view)
 
         self.previous_song = None
         self.stop_song = None
 
-        print "Plugin Activated"
+        # init the plugin to the current song
+        self.playing_entry_changed(sp, sp.get_playing_entry())
 
+        print("Plugin Activated")
 
     def do_deactivate(self):
-        print "Deactivating Plugin"
+        print("Deactivating Plugin")
         shell = self.object
-        uim = shell.props.ui_manager
-        
-        #shell = self.object
-        player = shell.props.shell_player
-        browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
-        browser_source_view.disconnect(self.br_cb)
-        uim.remove_ui(self.ui_id)
-        #self.manager.remove_action_group(self.action_group)
-        uim.ensure_update()
-        #for cb_id in self.cb_ids:
-        #    player.disconnect(cb_id)
 
-        #uim.remove_ui(self.ui_id)
-        uim.remove_action_group(self.action_group)
+        #browser_source_view = uim.get_widget("/BrowserSourceViewPopup")
+        #browser_source_view.disconnect(self.br_cb)
+
+        app = Gio.Application.get_default()
+        for widget in self._widgets:
+            widget.destroy()
+        del self._widgets[:]
+
+        for menu, index in self._menu_items:
+            app.remove_plugin_menu_item(menu, index)
+        del self._menu_items[:]
+
         sp = shell.props.shell_player
         sp.disconnect (self.pec_id)
         self.action_group = None
-        self.action = None
+        self.action_stop_after_current = None
 
-        del self.ui_id
-        #del self.cb_ids
-        #del self.manager
         del self.previous_song
         del self.stop_song
-        
-        print "Plugin Deactivated"
+
+        print("Plugin Deactivated")
+
+    def add_toolbar_togglebutton(self):
+        action_name = 'StopAfterCurrentTrack'
+
+        for child in self.object.props.window:
+            for child2 in child:
+                if 'Gtk.Toolbar' in str(child2):
+                    toolbar = child2
+        togg_btn_box = list(list(toolbar)[1])[0]
+
+        image = Gtk.Image()
+        image.set_from_icon_name('go-last-symbolic', Gtk.IconSize. LARGE_TOOLBAR)
+        btn_stop_after_current = Gtk.ToggleButton(image=image, tooltip_text='Stop after current track')
+        self._widgets += image, btn_stop_after_current
+
+        btn_stop_after_current.set_detailed_action_name('win.' + action_name)
+        btn_stop_after_current.set_sensitive(True)
+        btn_stop_after_current.connect('toggled', lambda obj: self.action_stop_after_current.set_active(obj.get_active()))
+        btn_stop_after_current.show()
+        togg_btn_box.pack_end(btn_stop_after_current, False, False, 0)
+
+    def add_popups(self):
+        action_name = 'StopAfterTrack'
+        label = 'Stop after this track'
+
+        popup_types = {'BrowserSourceViewPopup': 'browser-popup',
+                       'QueuePlaylistViewPopup': 'queue-popup',
+                       'PlaylistViewPopup': 'playlist-popup'}
+
+        for popup_type in popup_types:
+            plugin_type = popup_types[popup_type]
+            item = Gio.MenuItem()
+            item.set_detailed_action('win.' + action_name)
+            item.set_label(label)
+            app = Gio.Application.get_default()
+
+            index = plugin_type + action_name
+            app.add_plugin_menu_item(plugin_type, index, item)
+            self._menu_items.append([plugin_type, index])
 
     def get_all_popups(self):
         # Returns a list with all the widgets we use for the context menu.
         shell = self.object
         manager = shell.props.ui_manager
-        #manager = self.manager
         return (manager.get_widget("/BrowserSourceViewPopup/PluginPlaceholder/StopAfterTrackPopup"),
                 manager.get_widget("/PlaylistViewPopup/PluginPlaceholder/StopAfterTrackPopup"),
                 manager.get_widget("/QueuePlaylistViewPopup/PluginPlaceholder/StopAfterTrackPopup")
                 )
 
-    def toggle_status(self,action,shell):
-        if action.get_active():
+    def toggle_status(self, action, value):
+        """Used for stop after current song"""
+        print('status toggled')
+        if value:
             self.stop_status = True
         else:
             self.stop_status = False
-        print self.stop_status
+        print(self.stop_status)
+
+    def _set_button_status(self, status):
+        self.action_stop_after_current.set_enabled(status)
+        self._widgets[1].set_sensitive(status)
+
+    def stop(self, sp):
+        self.previous_song = None
+        self.action_stop_after_current.set_active(False)
+        self._widgets[1].set_active(False)
+        sp.stop()
+        self._set_button_status(False)
 
     def playing_entry_changed(self, sp, entry):
-        print "Playing entry changed"
-        print entry
+        print("Playing entry changed")
+        print(entry)
         if entry is not None:
-            self.action.set_sensitive(True)
+            self.action_stop_after_current.set_enabled(True)
             if self.stop_status:
-                self.action.set_active(False)
-                sp.stop()
+                self.stop(sp)
+            else:
+                self._set_button_status(True)
         else:
-            self.action.set_sensitive(False)
-
+            self._set_button_status(False)
+            self.action_stop_after_current.set_active(False)
 
         # Check what song was last played, stop if we should.
         # If not, check what song is playing and store it.
         if (self.previous_song is not None) and (self.previous_song == self.stop_song):
-            sp.pause()
-       
-        if sp.get_playing_entry() is not None: 
-            self.previous_song = sp.get_playing_entry().get_string(RB.RhythmDBPropType.LOCATION)
-            print "Previous song set to {0}".format(self.previous_song)
+            self.stop_song = None  # TODO make this an option
+            self.stop(sp)
 
+        if sp.get_playing_entry() is not None:
+            self.previous_song = sp.get_playing_entry().get_string(RB.RhythmDBPropType.LOCATION)
+            print("Previous song set to {0}".format(self.previous_song))
 
     def activate_browser_source_view(self, data):
         selected_song = self.get_selected_song()
@@ -180,7 +201,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
                 popup.set_label(_('Do not pause after track'))
             else:
                 popup.set_label(_('Pause after track'))
-        
+
     def get_selected_song(self):
         shell = self.object
         page = shell.props.selected_page
@@ -191,13 +212,21 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
             return selected[0].get_playback_uri()
         return None
 
-    def stop_after_track(self, action, shell):
+    def stop_after_current_track(self, action, param, shell):
+        """
+        Parameters
+        ----------
+        action :
+            The action that caused this, og Gio.SimpleAction
+        param :
+            I think we get the param list here, if so we should get none, so ignore it
+        shell :
+        The shell, why do we pass this in?
+        """
         selected_song = self.get_selected_song()
         if self.stop_song is not None and self.stop_song == selected_song:
-            print "a"
+            print("a")
             self.stop_song = None
         else:
-            print "b"
+            print("b")
             self.stop_song = selected_song
-
-        
