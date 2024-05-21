@@ -2,6 +2,7 @@
 # Copyright (C) 2012 - Srijan Choudhary
 # Copyright (C) 2012 - Radu Stoica
 # Copyright (C) 2012 - fossfreedom
+# Copyright (C) 2024 - OceanWolf
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -110,7 +111,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
                 if 'Gtk.Toolbar' in str(child2):
                     toolbar = child2
         togg_btn_box = list(list(toolbar)[1])[0]
-        
+
         image = Gtk.Image()
         image.set_from_icon_name('go-last-symbolic', Gtk.IconSize. LARGE_TOOLBAR)
         btn_stop_after_current = Gtk.ToggleButton(image=image, tooltip_text='Stop after current track')
@@ -136,7 +137,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
             item.set_detailed_action('win.' + action_name)
             item.set_label(label)
             app = Gio.Application.get_default()
-            
+
             index = plugin_type + action_name
             app.add_plugin_menu_item(plugin_type, index, item)
             self._menu_items.append([plugin_type, index])
@@ -188,8 +189,8 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         if (self.previous_song is not None) and (self.previous_song == self.stop_song):
             self.stop_song = None  # TODO make this an option
             self.stop(sp)
-       
-        if sp.get_playing_entry() is not None: 
+
+        if sp.get_playing_entry() is not None:
             self.previous_song = sp.get_playing_entry().get_string(RB.RhythmDBPropType.LOCATION)
             print("Previous song set to {0}".format(self.previous_song))
 
@@ -200,7 +201,7 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
                 popup.set_label(_('Do not pause after track'))
             else:
                 popup.set_label(_('Pause after track'))
-        
+
     def get_selected_song(self):
         shell = self.object
         page = shell.props.selected_page
@@ -217,9 +218,9 @@ class StopAfterPlugin (GObject.Object, Peas.Activatable):
         ----------
         action :
             The action that caused this, og Gio.SimpleAction
-        param : 
+        param :
             I think we get the param list here, if so we should get none, so ignore it
-        shell : 
+        shell :
         The shell, why do we pass this in?
         """
         selected_song = self.get_selected_song()
